@@ -1,5 +1,7 @@
 # MaJETstik
 
+![MaJETstik](majetstik-logo.svg)
+
 **An end-to-end particle-physics simulation pipeline: from proton–proton
 collision to analysis-ready ROOT file, in one command.**
 
