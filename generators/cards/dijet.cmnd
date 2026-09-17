@@ -1,0 +1,37 @@
+! ==========================================================================
+! Alternative process:  QCD dijets with a hard pT cut
+! ==========================================================================
+! Run it with:
+!     python3 main.py --pythia-card generators/cards/dijet.cmnd \
+!                     --run-name dijet --events 1000
+!
+! Compared with the Z->ee default this gives many more jets per event and a
+! much harder jet pT spectrum, which makes the substructure branches
+! (tau1/tau2/tau3, soft-drop mass) far more interesting to look at: a
+! 200 GeV jet has enough constituents for grooming to actually do something.
+! --------------------------------------------------------------------------
+
+Beams:idA = 2212
+Beams:idB = 2212
+Beams:eCM = 13600.
+
+! All 2 -> 2 QCD scatters (gg->gg, qg->qg, qq->qq, ...).
+HardQCD:all = on
+
+! Without a pThat cut the cross section diverges as pThat -> 0 and essentially
+! every event would be soft.  200 GeV puts us in the regime where jets are
+! well measured and substructure is meaningful.
+PhaseSpace:pTHatMin = 200.
+
+PartonLevel:ISR = on
+PartonLevel:FSR = on
+PartonLevel:MPI = on
+HadronLevel:Hadronize = on
+Tune:pp = 14
+
+Random:setSeed = on
+Random:seed = 12345
+
+Print:quiet = on
+Next:numberShowEvent = 0
+Next:numberCount = 0

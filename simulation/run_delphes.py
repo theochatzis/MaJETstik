@@ -1,0 +1,233 @@
+#!/usr/bin/env python3
+"""Stage 2 -- fast detector simulation with Delphes.
+
+What this stage does
+--------------------
+Pythia gives us a list of particles as nature made them.  A real experiment
+never sees that: it sees electrical signals in silicon and scintillator, with
+finite efficiency, finite resolution and finite granularity.  Delphes bridges
+the two with a *parameterised* simulation -- a few milliseconds per event
+instead of the several minutes a full Geant4 simulation would take.
+
+The chain of effects Delphes applies, in order (see the ``ExecutionPath`` block
+of the card):
+
+1. **Propagation** of charged particles through a solenoidal magnetic field
+   (3.8 T for CMS), which bends them and lets low-pT particles curl away.
+2. **Tracking**: a pT- and eta-dependent efficiency decides whether a track is
+   reconstructed at all, and its momentum is smeared by the tracker resolution.
+3. **Calorimetry**: particles deposit energy in electromagnetic and hadronic
+   calorimeter cells of finite size, smeared by the stochastic and constant
+   resolution terms.  Granularity is what makes two nearby particles merge into
+   one deposit.
+4. **Particle flow**: tracks and calorimeter deposits are combined into one
+   coherent list of candidates -- charged hadrons from tracks (better resolved
+   at low pT), photons and neutral hadrons from calorimeter towers.  These
+   ``EFlow*`` collections are the input to jet clustering in stage 3.
+5. **Object identification**: electrons, muons, photons, taus and b-jets are
+   identified with parameterised efficiencies and fake rates, and isolation is
+   computed.
+6. **Missing transverse energy**: the negative vector sum of everything seen.
+
+Input
+-----
+``data/<run_name>.hepmc`` from stage 1, plus the detector card
+``simulation/cards/majetstik_cms.tcl``.
+
+Output
+------
+``data/<run_name>_delphes.root`` -- a ROOT file with a ``Delphes`` tree whose
+branches are collections of C++ objects (``Jet``, ``Electron``, ``Muon``,
+``MissingET``, ``EFlowTrack``, ``EFlowPhoton``, ``EFlowNeutralHadron``,
+``Particle``, ``GenJet``, ...).  Stage 3 reads it with uproot.
+
+Reproducibility
+---------------
+Delphes smears energies with ROOT's global random generator.  The card keyword
+``set RandomSeed`` controls it, so this script writes a *derived* card into
+``data/`` with the pipeline seed injected, runs Delphes on that, and records
+the derived card's path and checksum in the provenance file.  The original card
+is never modified.
+
+Run standalone
+--------------
+    source setup_env.sh
+    python3 simulation/run_delphes.py --run-name smoke
+
+How to modify
+-------------
+* **Different detector**: ``--delphes-card $DELPHES_DIR/cards/delphes_card_ATLAS.tcl``
+  (or CMS Phase-II, FCC, ILD, ... -- see ``ls $DELPHES_DIR/cards``).
+* **Add pileup**: use one of the ``*_PileUp.tcl`` cards; they need a separate
+  minimum-bias file, see the Delphes workbook.
+* **Change the b-tagging working point**: edit the efficiency formulae in the
+  ``BTagging`` module of the card.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from majetstik.config import PipelineConfig
+from majetstik.logging_setup import banner, get_logger
+from majetstik.provenance import build_provenance, file_checksum, merge_provenance
+
+#: Delphes reader executables, keyed by input format.
+DELPHES_READERS = {
+    ".hepmc": "DelphesHepMC3",
+    ".hepmc3": "DelphesHepMC3",
+    ".hepmc2": "DelphesHepMC2",
+    ".lhe": "DelphesLHEF",
+    ".stdhep": "DelphesSTDHEP",
+}
+
+
+def _find_executable(name: str) -> str:
+    path = shutil.which(name)
+    if path is None:
+        raise RuntimeError(
+            f"{name} not found on PATH.\n"
+            "Did you run  `source setup_env.sh`  first?  "
+            "See README.md -> Installation Guide."
+        )
+    return path
+
+
+def write_seeded_card(cfg: PipelineConfig, log) -> Path:
+    """Copy the detector card, injecting the pipeline's random seed.
+
+    Delphes reads ``set RandomSeed <n>`` from the top of the card.  If the
+    original already sets it, we replace that line; otherwise we prepend one.
+    The derived card lands in ``data/`` so the original stays pristine and the
+    exact card used is preserved next to the output it produced.
+    """
+    source = cfg.resolve(cfg.delphes_card)
+    lines = source.read_text().splitlines()
+
+    seed_line = f"set RandomSeed {cfg.seed}"
+    replaced = False
+    for i, line in enumerate(lines):
+        if line.strip().startswith("set RandomSeed"):
+            lines[i] = seed_line
+            replaced = True
+            break
+    if not replaced:
+        lines.insert(0, seed_line)
+
+    derived = cfg.resolve(cfg.data_dir) / f"{cfg.run_name}_delphes_card.tcl"
+    derived.write_text(
+        f"# Generated by MaJETstik from {source}\n"
+        f"# Random seed injected by simulation/run_delphes.py; do not edit.\n"
+        + "\n".join(lines) + "\n")
+    log.info("derived card : %s (seed %s, %s)",
+             derived, cfg.seed, "replaced" if replaced else "prepended")
+    return derived
+
+
+def simulate(cfg: PipelineConfig, log=None) -> dict:
+    """Run Delphes over the HepMC file produced by stage 1."""
+    import uproot
+
+    log = log or get_logger("run_delphes", cfg.log_dir)
+    banner(log, "STAGE 2/5  Delphes fast detector simulation")
+
+    hepmc = cfg.hepmc_path
+    if not hepmc.is_file():
+        raise FileNotFoundError(
+            f"{hepmc} not found -- run stage 1 first:\n"
+            f"    python3 generators/gen_pythia.py --run-name {cfg.run_name}")
+
+    reader = DELPHES_READERS.get(hepmc.suffix.lower(), "DelphesHepMC3")
+    executable = _find_executable(reader)
+    card = write_seeded_card(cfg, log)
+
+    log.info("reader       : %s", executable)
+    log.info("input        : %s (%.1f MB)", hepmc, hepmc.stat().st_size / 1e6)
+    log.info("output       : %s", cfg.delphes_path)
+
+    # Delphes refuses to overwrite an existing output file.
+    if cfg.delphes_path.exists():
+        log.info("removing existing output file")
+        cfg.delphes_path.unlink()
+
+    cmd = [executable, str(card), str(cfg.delphes_path), str(hepmc)]
+    log.info("running: %s", " ".join(cmd))
+
+    t0 = time.time()
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    elapsed = time.time() - t0
+
+    # Delphes is chatty on stdout; keep it in the log file at debug level.
+    for line in (proc.stdout or "").splitlines():
+        log.debug("delphes| %s", line)
+    if proc.returncode != 0:
+        for line in (proc.stderr or "").splitlines()[-20:]:
+            log.error("delphes| %s", line)
+        raise RuntimeError(f"Delphes exited with code {proc.returncode}")
+
+    if not cfg.delphes_path.is_file():
+        raise RuntimeError(f"Delphes produced no output at {cfg.delphes_path}")
+
+    # A malformed HepMC file makes Delphes exit 0 with an empty tree, so check.
+    with uproot.open(cfg.delphes_path) as f:
+        n_entries = f["Delphes"].num_entries
+    if n_entries == 0:
+        raise RuntimeError(
+            f"Delphes wrote {cfg.delphes_path} but the tree is empty. "
+            "This usually means the HepMC input could not be parsed; "
+            "re-run stage 1 and check its self-check message.")
+
+    size_mb = cfg.delphes_path.stat().st_size / 1e6
+    log.info("simulated %d events in %.1f s  [%.1f evt/s]",
+             n_entries, elapsed, n_entries / max(elapsed, 1e-9))
+    log.info("output size  : %.1f MB", size_mb)
+
+    if not cfg.keep_hepmc:
+        log.info("deleting intermediate HepMC file (keep_hepmc=False)")
+        hepmc.unlink()
+
+    result = {
+        "n_events": int(n_entries),
+        "delphes_file": str(cfg.delphes_path),
+        "delphes_size_mb": round(size_mb, 2),
+        "delphes_reader": reader,
+        "derived_card": str(card),
+        "derived_card_checksum": file_checksum(card),
+        "elapsed_s": round(elapsed, 2),
+    }
+    merge_provenance(cfg.provenance_path,
+                     build_provenance(cfg, "run_delphes", **result))
+    return result
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(
+        description="Stage 2: run Delphes detector simulation on a HepMC file.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    ap.add_argument("--config", help="JSON config file")
+    ap.add_argument("--delphes-card", help="Delphes detector card (.tcl)")
+    ap.add_argument("--run-name", help="label for input/output files")
+    ap.add_argument("--seed", type=int, help="random seed for detector smearing")
+    args = ap.parse_args(argv)
+
+    cfg = PipelineConfig.from_file(args.config) if args.config else PipelineConfig()
+    if args.delphes_card: cfg.delphes_card = args.delphes_card
+    if args.run_name:     cfg.run_name = args.run_name
+    if args.seed:         cfg.seed = args.seed
+    cfg.validate()
+    cfg.ensure_dirs()
+
+    simulate(cfg)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

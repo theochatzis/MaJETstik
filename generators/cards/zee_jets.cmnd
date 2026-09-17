@@ -1,0 +1,53 @@
+! ==========================================================================
+! MaJETstik default process:  pp -> Z/gamma* -> e+ e-  (+ jets from the shower)
+! ==========================================================================
+! This is a Pythia 8 "command file".  Each line is  setting = value , and
+! everything after a `!` is a comment.  The full list of settings is at
+! https://pythia.org/latest-manual/Welcome.html
+!
+! Why this process?  Drell-Yan production of a Z that decays to two electrons
+! is the standard "candle" of hadron-collider physics: the final state is
+! clean, the Z mass peak at 91 GeV is a built-in calibration check, and the
+! accompanying jets come for free from initial-state radiation.  It exercises
+! every stage of the pipeline (leptons, jets, MET) in one go.
+! --------------------------------------------------------------------------
+
+! ---- Beams ---------------------------------------------------------------
+Beams:idA = 2212                  ! proton
+Beams:idB = 2212                  ! proton
+Beams:eCM = 13600.                ! LHC Run 3 centre-of-mass energy in GeV
+
+! ---- Hard process --------------------------------------------------------
+! f fbar -> gamma*/Z0 : the 2 -> 1 Drell-Yan process.
+WeakSingleBoson:ffbar2gmZ = on
+
+! Force the Z/gamma* to decay to electrons only.  Without this we would spend
+! most of the CPU on decay channels this example does not look at.
+23:onMode = off                   ! switch all Z decay channels off ...
+23:onIfAny = 11                   ! ... then switch the e+e- channel back on
+
+! Stay near and above the Z pole.  mHat is the invariant mass of the hard
+! system; below ~60 GeV the cross section is dominated by the photon tail.
+PhaseSpace:mHatMin = 60.
+
+! ---- Parton shower, hadronisation, underlying event ----------------------
+! These are all on by default; listed explicitly so you can switch them off
+! one at a time and watch what happens to the jets.
+PartonLevel:ISR = on              ! initial-state radiation -> the "+ jets"
+PartonLevel:FSR = on              ! final-state radiation
+PartonLevel:MPI = on              ! multiparton interactions = underlying event
+HadronLevel:Hadronize = on        ! partons -> colour-singlet hadrons
+
+! ---- Tune ----------------------------------------------------------------
+Tune:pp = 14                      ! Monash 2013 tune (Pythia 8 default)
+
+! ---- Reproducibility -----------------------------------------------------
+! gen_pythia.py overrides Random:seed from the pipeline config, so the value
+! here is only the fallback when the card is run standalone.
+Random:setSeed = on
+Random:seed = 12345
+
+! ---- Output verbosity ----------------------------------------------------
+Print:quiet = on                  ! suppress the per-event chatter
+Next:numberShowEvent = 0          ! do not dump full event records
+Next:numberCount = 0              ! gen_pythia.py prints its own progress

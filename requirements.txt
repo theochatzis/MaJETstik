@@ -1,0 +1,47 @@
+# ---------------------------------------------------------------------------
+# MaJETstik dependencies
+# ---------------------------------------------------------------------------
+# IMPORTANT: on a machine with CVMFS (lxplus, CERN/WLCG grid nodes, or any host
+# with /cvmfs mounted) you do NOT need to install anything.  Just run
+#
+#     source setup_env.sh
+#
+# which puts a prebuilt LCG view -- Pythia 8, Delphes, FastJet, ROOT and every
+# Python package below -- on your PATH and PYTHONPATH.  That is the supported
+# and tested path, and it takes seconds.
+#
+# This file exists for the case where you are building the stack yourself.  The
+# pip-installable part is listed here; the four C++ components underneath it
+# are NOT on PyPI in a usable form and are covered in README.md ->
+# "Installation without CVMFS".
+# ---------------------------------------------------------------------------
+
+# ---- pip-installable -------------------------------------------------------
+numpy>=1.24,<2.0          # arrays and maths everywhere
+uproot>=5.0               # pure-Python ROOT I/O: reads and writes .root files
+awkward>=2.0              # jagged (variable-length) arrays; uproot's data model
+pandas>=2.0               # tabular views in the tutorial notebook
+matplotlib>=3.6           # the figures made by analysis/analyze_jets.py
+particle>=0.23            # PDG id -> particle name, used in examples
+vector>=1.0               # Lorentz-vector arithmetic (optional convenience)
+
+# Optional, for examples/analysis_tutorial.ipynb
+jupyterlab>=4.0
+
+# ---- NOT pip-installable: provided by the LCG view -------------------------
+# The following are C++ projects.  Versions are the ones this project is
+# tested against; see README.md for how to build them yourself.
+#
+#   Pythia 8    8.313    event generator.  Python bindings are built with
+#                        `./configure --with-python-config=python3-config`,
+#                        which produces the `pythia8.so` module imported by
+#                        generators/gen_pythia.py.
+#   Delphes     3.5.1    fast detector simulation.  Provides the DelphesHepMC3
+#                        executable that simulation/run_delphes.py calls.
+#   FastJet     3.4.3    jet clustering, plus fastjet-contrib for
+#   + contrib            Nsubjettiness and SoftDrop.  Loaded as a shared
+#                        library by majetstik/fastjet.py.
+#   HepMC3      3.2.7    event interchange format.  Its `pyHepMC3` Python
+#                        bindings are used by majetstik/hepmc.py.
+#   ROOT        6.34     provides the C++ interpreter (Cling) that compiles the
+#                        FastJet kernel at runtime, and PyROOT.

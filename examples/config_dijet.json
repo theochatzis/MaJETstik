@@ -1,0 +1,32 @@
+{
+  "run_name": "dijet",
+  "n_events": 1000,
+  "seed": 20260917,
+
+  "pythia_card": "generators/cards/dijet.cmnd",
+  "beam_energy_cm": 13600.0,
+
+  "delphes_card": "simulation/cards/majetstik_cms.tcl",
+
+  "jet_algorithm": "antikt",
+  "jet_r": 0.8,
+  "jet_pt_min": 150.0,
+  "jet_eta_max": 2.5,
+
+  "nsub_beta": 1.0,
+  "softdrop_beta": 0.0,
+  "softdrop_zcut": 0.1,
+
+  "store_truth_particles": true,
+  "truth_status_filter": "final_or_hard",
+  "truth_pt_min": 1.0,
+  "store_constituents": true,
+
+  "make_plots": true,
+  "data_dir": "data",
+  "keep_hepmc": false,
+
+  "extra": {
+    "comment": "QCD dijets with pThat > 200 GeV, clustered into large-radius R=0.8 jets. Unlike the R=0.4 Z+jets default, these jets have enough constituents for soft-drop grooming and N-subjettiness to do real work: compare data/plots/jet_mass.png between the two runs. keep_hepmc is false because the HepMC file for this process is large and is not needed once Delphes has read it."
+  }
+}
